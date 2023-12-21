@@ -1438,6 +1438,15 @@ func (s *StageExecutor) Execute(ctx context.Context, base string) (imgID string,
 					}
 				}
 			}
+			// While we did run this stage, the results are already
+			// known and cached. Marking it as not being executed
+			// will let other stages that use `RUN --mount` to mount
+			// content from this stage to *not* invalidate the
+			// cache, as the value of `avoidLookingCache` is set
+			// to false if the stage's `didExecute` is true.
+			if canMatchCacheOnlyAfterRun && cacheID != "" {
+				s.didExecute = false
+			}
 		}
 
 		// If we didn't find a cache entry, or we need to add content
