@@ -293,6 +293,40 @@ _EOF
   run_buildah 1 run myctr ls -l subdir/
 }
 
+@test "bud --layers should not hit cache if heredoc is changed" {
+  local contextdir=${TEST_SCRATCH_DIR}/bud/platform
+  mkdir -p $contextdir
+
+  cat > $contextdir/Dockerfile << _EOF
+FROM alpine
+RUN <<EOF
+echo "Cache burst" >> /hello
+EOF
+RUN cat hello
+_EOF
+
+  # on first run since there is no cache so `Cache burst` must be printed
+  run_buildah build $WITH_POLICY_JSON --layers -t source -f $contextdir/Dockerfile
+  expect_output --substring "Cache burst"
+
+  # on second run since there is cache so `Cache burst` should not be printed
+  run_buildah build $WITH_POLICY_JSON --layers -t source -f $contextdir/Dockerfile
+  # output should not contain cache burst
+  assert "$output" !~ "Cache burst"
+
+  cat > $contextdir/Dockerfile << _EOF
+FROM alpine
+RUN <<EOF
+echo "Cache burst add diff" >> /hello
+EOF
+RUN cat hello
+_EOF
+
+  # on third run since we have changed heredoc so `Cache burst` must be printed.
+  run_buildah build $WITH_POLICY_JSON --layers -t source -f $contextdir/Dockerfile
+  expect_output --substring "Cache burst"
+}
+
 @test "bud build with heredoc content" {
   run_buildah build -t heredoc $WITH_POLICY_JSON -f $BUDFILES/heredoc/Containerfile .
   expect_output --substring "print first line from heredoc"
@@ -318,6 +352,15 @@ _EOF
   run_buildah build -t heredoc $WITH_POLICY_JSON -f $BUDFILES/heredoc/Containerfile.bash_file .
   expect_output --substring "this is the output of test9"
   expect_output --substring "this is the output of test10"
+}
+
+@test "bud build with heredoc content with inline interpreter" {
+  skip_if_in_container
+  _prefetch busybox
+  run_buildah build -t heredoc $WITH_POLICY_JSON -f $BUDFILES/heredoc/Containerfile.she_bang .
+  expect_output --substring "#
+this is the output of test11
+this is the output of test12"
 }
 
 @test "bud build with heredoc verify mount leak" {
@@ -926,7 +969,7 @@ FROM one
 RUN echo "target stage"
 _EOF
 
-  # with --skip-unused-stages=true no warning should be printed since ARG is decalred in stage which is not used
+  # with --skip-unused-stages=true no warning should be printed since ARG is declared in stage which is not used
   run_buildah build $WITH_POLICY_JSON --skip-unused-stages=true -t source -f $contextdir/Dockerfile
   expect_output --substring "needed stage"
   expect_output --substring "target stage"
@@ -1941,7 +1984,7 @@ _EOF
   # Reuse cached layers and check if --output still works as expected
   run_buildah build --output type=local,dest=$mytmpdir/rootfs $WITH_POLICY_JSON -t test-bud -f $mytmpdir/Containerfile .
   ls $mytmpdir/rootfs
-  # exported rootfs must contain only 'target' from last/final stage and not contain file `rouge` from first stage
+  # exported rootfs must contain only 'target' from last/final stage and not contain file `rogue` from first stage
   expect_output --substring 'target'
   # must not contain rogue from first stage
   assert "$output" =~ "rogue"
@@ -1962,7 +2005,7 @@ _EOF
   # Reuse cached layers and check if --output still works as expected
   run_buildah build --output type=local,dest=$mytmpdir/rootfs $WITH_POLICY_JSON -t test-bud -f $mytmpdir/Containerfile .
   ls $mytmpdir/rootfs
-  # exported rootfs must contain only 'rouge' even if build from cache.
+  # exported rootfs must contain only 'rogue' even if build from cache.
   expect_output --substring 'rogue'
 }
 
@@ -4337,6 +4380,12 @@ EOM
   expect_output ""
 }
 
+@test "bud-implicit-no-history" {
+  _prefetch nixery.dev/shell
+  run_buildah build $WITH_POLICY_JSON --layers=false $BUDFILES/no-history
+  run_buildah build $WITH_POLICY_JSON --layers=true  $BUDFILES/no-history
+}
+
 @test "bud with encrypted FROM image" {
   _prefetch busybox
   local contextdir=${TEST_SCRATCH_DIR}/tmp
@@ -4566,7 +4615,7 @@ EOF
   # Build first in Docker format.  Whether we do OCI or Docker first shouldn't matter, so we picked one.
   run_buildah build --iidfile ${TEST_SCRATCH_DIR}/first-docker  --format docker --layers --quiet $WITH_POLICY_JSON $BUDFILES/cache-format
 
-  # Build in OCI format.  Cache should not re-use the same images, so we should get a different image ID.
+  # Build in OCI format.  Cache should not reuse the same images, so we should get a different image ID.
   run_buildah build --iidfile ${TEST_SCRATCH_DIR}/first-oci     --format oci    --layers --quiet $WITH_POLICY_JSON $BUDFILES/cache-format
 
   # Build in Docker format again.  Cache traversal should 100% hit the Docker image, so we should get its image ID.
